@@ -1,0 +1,1 @@
+python G11HW1.py points.csv 4 10 10
