@@ -5,14 +5,10 @@ from pyspark import RDD, SparkConf, SparkContext
 from pyspark.mllib.clustering import KMeans
 
 
-def euclidean_distance(a: tuple, b: tuple) -> float:
-    return math.sqrt(sum([(a[i] - b[i]) ** 2 for i in range(len(a))]))
-
-
 def dist(u: tuple, C: tuple) -> float:
     min_i, min_d = 0, float('inf')
     for i, c in enumerate(C):
-        d = euclidean_distance(u, c)
+        d = math.dist(u, c)
         if d < min_d:
             min_i, min_d = i, d
     return min_i, min_d
