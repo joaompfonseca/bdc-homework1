@@ -1,46 +1,53 @@
 import argparse
+import math
 
-from pyspark import SparkConf, SparkContext
+from pyspark import RDD, SparkConf, SparkContext
 from pyspark.mllib.clustering import KMeans
 
 
-def euclidean_distance(a, b):
-    return sum([(a[i] - b[i]) ** 2 for i in range(len(a))]) ** 0.5
-
-def MRComputeStandardObjective(U, C):
-    U = [u[:-1] for u in U]
-    return (1 / len(U)) * sum([min([euclidean_distance(u, c) for c in C]) for u in U])
+def euclidean_distance(a: tuple, b: tuple) -> float:
+    return math.sqrt(sum([(a[i] - b[i]) ** 2 for i in range(len(a))]))
 
 
-def MRComputeFairObjective(U, C):
-    A = [u for u in U if u[-1] == 'A']
-    B = [u for u in U if u[-1] == 'B']
-    return max(MRComputeStandardObjective(A, C), MRComputeStandardObjective(B, C))
+def dist(u: tuple, C: tuple) -> float:
+    min_i, min_d = 0, float('inf')
+    for i, c in enumerate(C):
+        d = euclidean_distance(u, c)
+        if d < min_d:
+            min_i, min_d = i, d
+    return min_i, min_d
 
 
-def MRPrintStatistics(U, C):
-    counts = [{'A': 0, 'B': 0} for _ in range(len(C))]
-    for u in U:
-        closest_c = (0, float('inf'))
-        for i, c in enumerate(C):
-            dist = euclidean_distance(u[:-1], c)
-            if dist < closest_c[1]:
-                closest_c = (i, dist)
-        counts[closest_c[0]][u[-1]] += 1
+def MRComputeStandardObjective(U: RDD, C: list) -> float:
+    return (1 / U.count()) * U.map(lambda u: dist(u, C)[1] ** 2).sum()
 
-    for i, count in enumerate(counts):
-        print(f'i = {i}, center = ({C[i][0]:.6f},{C[i][1]:.6f}), NA{i} = {count["A"]}, NB{i} = {count["B"]}')
+
+def MRComputeFairObjective(U: RDD, C: list) -> float:
+        return (U.map(lambda u: (u[-1], (dist(u[:-1], C)[1] ** 2, 1))) # label, distance, count
+                 .reduceByKey(lambda x, y: (x[0] + y[0], x[1] + y[1])) # label, sum distances, sum counts
+                 .map(lambda x: (1 / x[1][1]) * x[1][0])               # objective                      
+                 .max())
+
+
+def MRPrintStatistics(U: RDD, C: list) -> None:
+    statistics = (U.map(lambda u: (dist(u[:-1], C)[0], {u[-1]: 1}))                                   # centroid, {label: count}
+                   .reduceByKey(lambda x, y: {k: x.get(k, 0) + y.get(k, 0) for k in set(x) | set(y)}) # centroid, {all labels: sum counts}
+                   .sortByKey()
+                   .collect())
+    for i, counts in statistics:
+        center = [f'{v:.6f}' for v in C[i]]
+        print(f'i = {i}, center = ({",".join(center)}), NA{i} = {counts.get("A", 0)}, NB{i} = {counts.get("B", 0)}')
 
 
 def main(data_path, L, K, M):
-    
+
     # Print command-line arguments
     print(f'Input file = {data_path}, L = {L}, K = {K}, M = {M}')
 
     # Setup Spark
     conf = SparkConf().setAppName('G11HW1')
     sc = SparkContext(conf=conf)
-    
+
     # Subdivide the input file into L random partitions
     docs = sc.textFile(data_path).repartition(numPartitions=L).cache()
     input_points = docs.map(lambda x: [float(i) for i in x.split(',')[:-1]] + [x.split(',')[-1]]).cache()
@@ -55,12 +62,12 @@ def main(data_path, L, K, M):
     centroids = KMeans.train(input_points.map(lambda x: x[:-1]), K, maxIterations=M)
 
     # Print standard and fair objectives
-    delta = MRComputeStandardObjective(input_points.collect(), centroids.clusterCenters)
+    delta = MRComputeStandardObjective(input_points.map(lambda x: x[:-1]), centroids.clusterCenters)
     print(f'Delta(U,C) = {delta:.6f}')
-    phi = MRComputeFairObjective(input_points.collect(), centroids.clusterCenters)
+    phi = MRComputeFairObjective(input_points, centroids.clusterCenters)
     print(f'Phi(A,B,C) = {phi:.6f}')
 
-    MRPrintStatistics(input_points.collect(), centroids.clusterCenters)
+    MRPrintStatistics(input_points, centroids.clusterCenters)
 
 
 if __name__ == '__main__':
