@@ -19,20 +19,28 @@ def MRComputeStandardObjective(U: RDD, C: list) -> float:
 
 
 def MRComputeFairObjective(U: RDD, C: list) -> float:
-        return (U.map(lambda u: (u[-1], (dist(u[:-1], C)[1] ** 2, 1))) # label, distance, count
-                 .reduceByKey(lambda x, y: (x[0] + y[0], x[1] + y[1])) # label, sum distances, sum counts
-                 .map(lambda x: (1 / x[1][1]) * x[1][0])               # objective                      
-                 .max())
+        return (U.map        ( lambda u:    (u[-1], (dist(u[:-1], C)[1] ** 2, 1)) ) # [(label, (distance, count)),...]
+                 .reduceByKey( lambda x, y: (x[0] + y[0], x[1] + y[1])            ) # [(label, (sum_distance, sum_count)),...]
+                 .map        ( lambda x:    (1 / x[1][1]) * x[1][0]               ) # [objective,...]       
+                 .max())                                                            # max objective
 
 
 def MRPrintStatistics(U: RDD, C: list) -> None:
-    statistics = (U.map(lambda u: (dist(u[:-1], C)[0], {u[-1]: 1}))                                   # centroid, {label: count}
-                   .reduceByKey(lambda x, y: {k: x.get(k, 0) + y.get(k, 0) for k in set(x) | set(y)}) # centroid, {all labels: sum counts}
-                   .sortByKey()
+    statistics = (U.map        ( lambda u: ((dist(u[:-1], C)[0], u[-1]), 1) ) # [((centroid, label), count),...]
+                   .reduceByKey( lambda x, y: x + y                         ) # [((centroid, label), sum_count),...]
+                   .map        ( lambda x: (x[0][0], (x[0][1], x[1]))       ) # [(centroid, (label, sum_count)),...]
+                   .groupByKey()                                              # [(centroid, [(label, sum_count),...]),...]
+                   .sortByKey()                                               
                    .collect())
-    for i, counts in statistics:
-        center = [f'{v:.6f}' for v in C[i]]
-        print(f'i = {i}, center = ({",".join(center)}), NA{i} = {counts.get("A", 0)}, NB{i} = {counts.get("B", 0)}')
+    for centroid, label_counts in statistics:
+        i      = centroid
+        center = [f'{v:.6f}' for v in C[centroid]]
+        NAi    = 0
+        NBi    = 0
+        for label, count in label_counts:
+            if label == 'A': NAi = count
+            if label == 'B': NBi = count
+        print(f'i = {i}, center = ({",".join(center)}), NA{i} = {NAi}, NB{i} = {NBi}')
 
 
 def main(data_path, L, K, M):
